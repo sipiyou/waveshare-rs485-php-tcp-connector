@@ -23,6 +23,7 @@ if ($waveshareClient->connect()) {
         if ($string !== null)
             echo $string;
         */
+
     }
 } else {
     echo "cannot connect to waveshare";

@@ -58,9 +58,9 @@ class WaveshareClient {
         return implode("\n", $lines);
     }
     
-    public function readFromSocket ($socket, int $timeout = 0) : ?string {
+    public function readFromSocket (int $timeout = 0) : ?string {
         if ($timeout > 0) {
-            socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, [
+            socket_set_option($this->socket, SOL_SOCKET, SO_RCVTIMEO, [
                 'sec' => $timeout,  // Seconds
                 'usec' => 0   // Microseconds
             ]);
@@ -68,16 +68,16 @@ class WaveshareClient {
 
         $data = false;
         try {
-            $data = @socket_read($socket, 2048, PHP_BINARY_READ);
+            $data = @socket_read($this->socket, 2048, PHP_BINARY_READ);
         }  catch (Throwable $t) {
-            $this->log ("Error on read. Socket probably disconnected.");
+            ($this->log)("Error on read. Socket probably disconnected.");
             return null;
         }
         
         if ($data === false) {
-            $error = socket_last_error($socket);
+            $error = socket_last_error($this->socket);
             if ($error != SOCKET_EAGAIN && $error != SOCKET_EWOULDBLOCK) {
-                $this->log("Failed to read from socket: " . socket_strerror($error));
+                ($this->log)("Failed to read from socket: " . socket_strerror($error));
                 return null;
             }
         }
@@ -91,7 +91,7 @@ class WaveshareClient {
         
         $read = [$this->socket];
         if (socket_select($read, $write, $except, $this->timeOut) > 0) {
-            $response = $this->readFromSocket ($this->socket);
+            $response = $this->readFromSocket ();
             if ($response != null) {
                 $response = unpack('C*', $response);
             }
@@ -106,31 +106,39 @@ class WaveshareClient {
         
         $read = [$this->socket];
         if (socket_select($read, $write, $except, $this->timeOut) > 0) {
-            $response = $this->readFromSocket ($this->socket);
+            $response = $this->readFromSocket ();
         }
         return $response;
     }
 
-    public function writeToSocket(array $data): bool {
-        $binaryString = pack('C*', ...$data);
+    private function writeToSocket (string $data) : bool {
         $totalWritten = 0;
-        $length = strlen($binaryString);
+        $length = strlen($data);
 
         try {
             while ($totalWritten < $length) {
-                $written = socket_write($this->socket, substr($binaryString, $totalWritten), $length - $totalWritten);
+                $written = socket_write($this->socket, substr($data, $totalWritten), $length - $totalWritten);
                 if ($written === false) {
                     $error = socket_last_error($this->socket);
-                    $this->log("Failed to write to socket:" . socket_strerror($error));
+                    ($this->log)("Failed to write to socket:" . socket_strerror($error));
                     return false;
                 }
                 $totalWritten += $written;
             }
             return true;
         } catch (Throwable $e) {
-            $this->log("writeToSocket failed:" . $e->getMessage());
+            ($this->log)("writeToSocket failed:" . $e->getMessage());
         }
         return false;
+    }
+    
+    public function writeArrayToSocket(array $data): bool {
+        $binaryString = pack('C*', ...$data);
+        return ($this->writeToSocket ($binaryString));
+    }
+
+    public function writeStringToSocket(string $data): bool {
+        return ($this->writeToSocket ($data));
     }
 }
 ?>
