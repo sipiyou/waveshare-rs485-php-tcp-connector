@@ -9,16 +9,24 @@
 class WaveshareClient {
     private string $host;
     private int $port;
-    private int $timeOut;
+    private int $connectTimeOut;
+    private int $readTimeoutSec;
+    private int $readTimeoutUsec;
 
     private array $dataBlock;
     private $socket;
     private $log;
-    
-    public function __construct(callable $logFunction, string $host, int $port, int $timeOut) {
+
+    /**
+     * @param int $connectTimeOut  TCP-Connect Timeout in Sekunden
+     * @param int $readTimeoutMs   Read-Timeout in Millisekunden (0 = non-blocking poll)
+     */
+    public function __construct(callable $logFunction, string $host, int $port, int $connectTimeOut = 2, int $readTimeoutMs = 10) {
         $this->host = $host;
         $this->port = $port;
-        $this->timeOut = $timeOut;
+        $this->connectTimeOut  = $connectTimeOut;
+        $this->readTimeoutSec  = (int)($readTimeoutMs / 1000);
+        $this->readTimeoutUsec = ($readTimeoutMs % 1000) * 1000;
 
         $this->dataBlock = [];
         $this->socket = false;
@@ -33,11 +41,28 @@ class WaveshareClient {
     public function connect () : bool {
         $this->socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
         if ($this->socket === false) {
-            die("Failed to create socket: " . socket_strerror(socket_last_error()) . "\n");
+            ($this->log)("Failed to create socket: " . socket_strerror(socket_last_error()));
             return false;
         }
         socket_set_nonblock($this->socket);
-        @socket_connect($this->socket, $this->host, $this->port); // Non-blocking connect
+        @socket_connect($this->socket, $this->host, $this->port);
+
+        // Warten bis TCP-Handshake abgeschlossen (socket write-ready)
+        $read = $except = null;
+        $write = [$this->socket];
+        $ready = socket_select($read, $write, $except, $this->connectTimeOut);
+
+        if (!$ready) {
+            ($this->log)("Connect zu {$this->host}:{$this->port} Timeout nach {$this->connectTimeOut}s");
+            return false;
+        }
+
+        // Verbindungsfehler prüfen (SO_ERROR, z.B. ECONNREFUSED)
+        $err = socket_get_option($this->socket, SOL_SOCKET, SO_ERROR);
+        if ($err !== 0) {
+            ($this->log)("Connect zu {$this->host}:{$this->port} fehlgeschlagen: " . socket_strerror($err));
+            return false;
+        }
 
         return true;
     }
@@ -90,7 +115,7 @@ class WaveshareClient {
         $write = $except = null;
         
         $read = [$this->socket];
-        if (socket_select($read, $write, $except, $this->timeOut) > 0) {
+        if (socket_select($read, $write, $except, $this->readTimeoutSec, $this->readTimeoutUsec) > 0) {
             $response = $this->readFromSocket ();
             if ($response != null) {
                 $response = unpack('C*', $response);
@@ -103,9 +128,9 @@ class WaveshareClient {
         $response = null;
 
         $write = $except = null;
-        
+
         $read = [$this->socket];
-        if (socket_select($read, $write, $except, $this->timeOut) > 0) {
+        if (socket_select($read, $write, $except, $this->readTimeoutSec, $this->readTimeoutUsec) > 0) {
             $response = $this->readFromSocket ();
         }
         return $response;
@@ -114,15 +139,22 @@ class WaveshareClient {
     private function writeToSocket (string $data) : bool {
         $totalWritten = 0;
         $length = strlen($data);
+        $retries = 5;
 
         try {
             while ($totalWritten < $length) {
                 $written = socket_write($this->socket, substr($data, $totalWritten), $length - $totalWritten);
                 if ($written === false) {
                     $error = socket_last_error($this->socket);
+                    if (($error === SOCKET_EAGAIN || $error === SOCKET_EWOULDBLOCK) && $retries-- > 0) {
+                        $r = $ex = null; $w = [$this->socket];
+                        socket_select($r, $w, $ex, 1);
+                        continue;
+                    }
                     ($this->log)("Failed to write to socket:" . socket_strerror($error));
                     return false;
                 }
+                $retries = 5;
                 $totalWritten += $written;
             }
             return true;
