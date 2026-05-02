@@ -4,6 +4,7 @@
   (c) 2025 Nima Ghassemi Nejad
 
   v 1.0  05.07.2025 - initial release
+  v 1.1  12.04.2026 - reconnect() Methode hinzugefügt
  */
 
 class WaveshareClient {
@@ -164,6 +165,14 @@ class WaveshareClient {
         return false;
     }
     
+    public function reconnect(): bool {
+        if ($this->socket !== false) {
+            socket_close($this->socket);
+            $this->socket = false;
+        }
+        return $this->connect();
+    }
+
     public function writeArrayToSocket(array $data): bool {
         $binaryString = pack('C*', ...$data);
         return ($this->writeToSocket ($binaryString));
