@@ -100,12 +100,17 @@ class WaveshareClient {
             return null;
         }
         
+        if ($data === '') {
+            // socket_read() returns empty string when the remote end closed the connection
+            ($this->log)("Socket closed by remote peer.");
+            return null;
+        }
         if ($data === false) {
             $error = socket_last_error($this->socket);
             if ($error != SOCKET_EAGAIN && $error != SOCKET_EWOULDBLOCK) {
                 ($this->log)("Failed to read from socket: " . socket_strerror($error));
-                return null;
             }
+            return null;
         }
         return $data;
     }
@@ -118,7 +123,7 @@ class WaveshareClient {
         $read = [$this->socket];
         if (socket_select($read, $write, $except, $this->readTimeoutSec, $this->readTimeoutUsec) > 0) {
             $response = $this->readFromSocket ();
-            if ($response != null) {
+            if ($response !== null) {
                 $response = unpack('C*', $response);
             }
         }
